@@ -1,6 +1,8 @@
 #!/bin/bash
 # Forked from binhex's OpenVPN dockers
 
+DEBUG=false
+
 # Wait until tunnel is up
 while : ; do
 	tunnelstat=$(netstat -ie | grep -E "tun|tap")
@@ -13,18 +15,15 @@ done
 
 echo "[info] WebUI port defined as ${WEBUI_PORT}" | ts '%Y-%m-%d %H:%M:%.S'
 
-# ip route
-###
-
-DEBUG=false
+# strip whitespace from start and end of LAN_NETWORK
+export LAN_NETWORK=$(echo "${LAN_NETWORK}" | sed -e 's~^[ \t]*~~;s~[ \t]*$~~')
+echo "[info] LAN Network defined as ${LAN_NETWORK}" | ts '%Y-%m-%d %H:%M:%.S'
 
 # get default gateway of interfaces as looping through them
 DEFAULT_GATEWAY=$(ip -4 route list 0/0 | cut -d ' ' -f 3)
+echo "[info] Default gateway defined as ${DEFAULT_GATEWAY}" | ts '%Y-%m-%d %H:%M:%.S'
 
-# strip whitespace from start and end of lan_network_item
-export LAN_NETWORK=$(echo "${LAN_NETWORK}" | sed -e 's~^[ \t]*~~;s~[ \t]*$~~')
-
-echo "[info] Adding ${LAN_NETWORK} as route via docker eth0" | ts '%Y-%m-%d %H:%M:%.S'
+#echo "[info] Adding ${LAN_NETWORK} as route via docker eth0" | ts '%Y-%m-%d %H:%M:%.S'
 ip route add "${LAN_NETWORK}" via "${DEFAULT_GATEWAY}" dev eth0
 
 echo "[info] ip route defined as follows..." | ts '%Y-%m-%d %H:%M:%.S'
@@ -48,7 +47,12 @@ if [[ $iptable_mangle_exit_code == 0 ]]; then
 	echo "[info] iptable_mangle support detected, adding fwmark for tables" | ts '%Y-%m-%d %H:%M:%.S'
 
 	# setup route for qbittorrent webui using set-mark to route traffic for port 8080 to eth0
-	echo "8080    webui" >> /etc/iproute2/rt_tables
+	if [ -z "${WEBUI_PORT}" ]; then
+		echo "8080    webui" >> /etc/iproute2/rt_tables
+	else
+		echo "${WEBUI_PORT}     webui" >> /etc/iproute2/rt_tables
+	fi
+	
 	ip rule add fwmark 1 table webui
 	ip route add default via ${DEFAULT_GATEWAY} table webui
 

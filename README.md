@@ -12,7 +12,8 @@ Docker container which runs the latest headless qBittorrent client with WebUI wh
 * Selectively enable or disable OpenVPN support
 * IP tables kill switch to prevent IP leaking when VPN connection fails
 * Specify name servers to add to container
-* Configure UID and GID for config files and downloads by qBittorrent
+* Configure UID, GID, and UMASK for config files and downloads by qBittorrent
+* WebUI\CSRFProtection set to false by default for Unraid users
 
 # Run container from Docker registry
 The container is available from the Docker registry and this is the simplest way to get it.
@@ -42,6 +43,7 @@ $ docker run --privileged  -d \
 |`NAME_SERVERS`| No | Comma delimited name servers |`NAME_SERVERS=8.8.8.8,8.8.4.4`|
 |`PUID`| No | UID applied to config files and downloads |`PUID=99`|
 |`PGID`| No | GID applied to config files and downloads |`PGID=100`|
+|`UMASK`| No | GID applied to config files and downloads |`UMASK=002`|
 |`WEBUI_PORT_ENV`| No | Applies WebUI port to qBittorrents config at boot (Must change exposed ports to match)  |`WEBUI_PORT_ENV=8080`|
 |`INCOMING_PORT_ENV`| No | Applies Incoming port to qBittorrents config at boot (Must change exposed ports to match) |`INCOMING_PORT_ENV=8999`|
 
@@ -68,7 +70,7 @@ Access http://IPADDRESS:PORT from a browser on the same network.
 |`WebUI Password`| adminadmin |
 
 ## Origin header & Target origin mismatch
-qBittorrent throws a [Origin header & Target origin mismatch](https://github.com/qbittorrent/qBittorrent/issues/6977#issuecomment-309304385) if trying to open the WebUI in unRAID with the WebUI link. Type http://IPADDRESS:PORT into a browser on the same network and it will work. 
+WebUI\CSRFProtection must be set to false in qBittorrent.conf if using an unconfigured reverse proxy or forward request within a browser. This is the default setting unless changed. This file can be found in the dockers config directory in /qBittorrent/config
 
 ## WebUI: Invalid Host header, port mismatch
 qBittorrent throws a [WebUI: Invalid Host header, port mismatch](https://github.com/qbittorrent/qBittorrent/issues/7641#issuecomment-339370794) error if you use port forwarding with bridge networking due to security features to prevent DNS rebinding attacks. If you need to run qBittorrent on different ports, instead edit the WEBUI_PORT_ENV and/or INCOMING_PORT_ENV variables AND the exposed ports to change the native ports qBittorrent uses.
