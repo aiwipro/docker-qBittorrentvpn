@@ -29,7 +29,7 @@ $ docker run --privileged  -d \
               -p 8080:8080 \
               -p 8999:8999 \
               -p 8999:8999/udp \
-              markusmcnugen/qbittorrentvpn
+              aiwi/docker-qbittorrentvpn
 ```
 
 # Variables, Volumes, and Ports
