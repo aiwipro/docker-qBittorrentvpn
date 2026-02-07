@@ -1,136 +1,218 @@
-[preview]: https://raw.githubusercontent.com/MarkusMcNugen/docker-templates/master/qbittorrentvpn/Screenshot.png "qBittorrent Preview"
+# qBittorrent with OpenVPN and Kill Switch
 
-# qBittorrent with WebUI and OpenVPN
-Docker container which runs the latest headless qBittorrent client with WebUI while connecting to OpenVPN with iptables killswitch to prevent IP leakage when the tunnel goes down.
+Docker container running the latest headless qBittorrent client with WebUI, connected through OpenVPN with an iptables kill switch to prevent IP leaks if the VPN tunnel drops.
 
-![alt text][preview]
+## Features
 
-## Docker Features
-* Base: Ubuntu 24.04 LTS
-* Always builds latest qBittorrent client
-* Size: ~300MB
-* Selectively enable or disable OpenVPN support
-* IP tables kill switch to prevent IP leaking when VPN connection fails
-* Specify name servers to add to container (defaults to Cloudflare and Quad9)
-* Configure UID, GID, and UMASK for config files and downloads by qBittorrent
-* WebUI\CSRFProtection set to false by default for Unraid users
-* Health check to monitor qBittorrent WebUI availability
-* Uses modern networking tools (iproute2) instead of deprecated net-tools
+- Ubuntu 24.04 LTS base, always builds latest qBittorrent
+- OpenVPN support (can be disabled)
+- iptables kill switch — all traffic blocked if VPN goes down
+- IPv6 fully disabled to prevent leaks
+- DNS leak prevention (defaults to Cloudflare `1.1.1.1` and Quad9 `9.9.9.9`)
+- Configurable UID/GID/UMASK for file permissions
+- Docker health check on WebUI availability
 
-# Run container from Docker registry
-The container is available from the Docker registry and this is the simplest way to get it.
-To run the container use this command:
+---
 
-```
-$ docker run -d \
-              --cap-add=NET_ADMIN \
-              --cap-add=SYS_MODULE \
-              --device=/dev/net/tun \
-              -v /your/config/path/:/config \
-              -v /your/downloads/path/:/downloads \
-              -e "VPN_ENABLED=yes" \
-              -e "LAN_NETWORK=192.168.1.0/24" \
-              -e "NAME_SERVERS=1.1.1.1,9.9.9.9" \
-              -p 8080:8080 \
-              -p 8999:8999 \
-              -p 8999:8999/udp \
-              aiwi/docker-qbittorrentvpn
+## Quick Start with Docker Compose (Recommended)
+
+This is the easiest way to run the container, especially on a Raspberry Pi.
+
+### 1. Create your directory structure
+
+```bash
+mkdir -p ~/qbittorrent/config/openvpn
+mkdir -p ~/qbittorrent/downloads
 ```
 
-**Note:** This container uses specific Linux capabilities (`--cap-add`) instead of `--privileged` mode for better security. If you encounter issues, you can fall back to `--privileged` mode, but the capability-based approach is recommended.
+### 2. Add your VPN config
 
-# Variables, Volumes, and Ports
+Copy your `.ovpn` file from your VPN provider into the `config/openvpn/` directory:
+
+```bash
+cp /path/to/your-vpn.ovpn ~/qbittorrent/config/openvpn/
+```
+
+### 3. Create `docker-compose.yml`
+
+```yaml
+services:
+  qbittorrent:
+    image: aiwi/docker-qbittorrentvpn
+    container_name: qbittorrent
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    devices:
+      - /dev/net/tun
+    volumes:
+      - ./config:/config
+      - ./downloads:/downloads
+    environment:
+      - VPN_ENABLED=yes
+      - LAN_NETWORK=192.168.1.0/24
+      - NAME_SERVERS=1.1.1.1,9.9.9.9
+      - PUID=1000
+      - PGID=1000
+    ports:
+      - 8080:8080
+      - 8999:8999
+      - 8999:8999/udp
+```
+
+> **Tip:** Change `LAN_NETWORK` to match your local network. On Raspbian, run `ip route | grep default` to find it (e.g. `192.168.1.0/24`).
+
+### 4. Start the container
+
+```bash
+docker compose up -d
+```
+
+### 5. Open the WebUI
+
+Go to `http://<YOUR-PI-IP>:8080` in a browser on the same network.
+
+Default login: **admin** / **adminadmin**
+
+---
+
+## Raspberry Pi / Raspbian Notes
+
+- **Architecture:** This image must be built for ARM if you're running on a Raspberry Pi. If the pre-built image doesn't support ARM, see [Building the Container Yourself](#building-the-container-yourself) below.
+- **Find your LAN network:** Run `ip route | grep default` — if the output shows `192.168.1.1`, your `LAN_NETWORK` is `192.168.1.0/24`.
+- **Find your PUID/PGID:** Run `id` — use the `uid` and `gid` values shown (typically `1000` for the default `pi` user).
+- **TUN device:** If `/dev/net/tun` doesn't exist, load the module: `sudo modprobe tun`. To make it persist across reboots, add `tun` to `/etc/modules`.
+- **Performance:** qBittorrent + OpenVPN can be demanding on older Pi models. A Raspberry Pi 4 or newer is recommended.
+
+---
+
+## Docker Run (Alternative)
+
+```bash
+docker run -d \
+  --cap-add=NET_ADMIN \
+  --cap-add=SYS_MODULE \
+  --device=/dev/net/tun \
+  -v /your/config/path:/config \
+  -v /your/downloads/path:/downloads \
+  -e "VPN_ENABLED=yes" \
+  -e "LAN_NETWORK=192.168.1.0/24" \
+  -e "NAME_SERVERS=1.1.1.1,9.9.9.9" \
+  -p 8080:8080 \
+  -p 8999:8999 \
+  -p 8999:8999/udp \
+  aiwi/docker-qbittorrentvpn
+```
+
+---
+
 ## Environment Variables
-| Variable | Required | Function | Example |
-|----------|----------|----------|----------|
-|`VPN_ENABLED`| Yes | Enable VPN? (yes/no) Default:yes|`VPN_ENABLED=yes`|
-|`VPN_USERNAME`| No | If username and password provided, configures ovpn file automatically |`VPN_USERNAME=ad8f64c02a2de`|
-|`VPN_PASSWORD`| No | If username and password provided, configures ovpn file automatically |`VPN_PASSWORD=ac98df79ed7fb`|
-|`LAN_NETWORK`| Yes | Local Network with CIDR notation |`LAN_NETWORK=192.168.1.0/24`|
-|`NAME_SERVERS`| No | Comma delimited name servers |`NAME_SERVERS=8.8.8.8,8.8.4.4`|
-|`PUID`| No | UID applied to config files and downloads |`PUID=99`|
-|`PGID`| No | GID applied to config files and downloads |`PGID=100`|
-|`UMASK`| No | GID applied to config files and downloads |`UMASK=002`|
-|`WEBUI_PORT_ENV`| No | Applies WebUI port to qBittorrents config at boot (Must change exposed ports to match)  |`WEBUI_PORT_ENV=8080`|
-|`INCOMING_PORT_ENV`| No | Applies Incoming port to qBittorrents config at boot (Must change exposed ports to match) |`INCOMING_PORT_ENV=8999`|
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `VPN_ENABLED` | No | `yes` | Enable VPN (`yes` or `no`) |
+| `VPN_USERNAME` | No | — | VPN username (auto-configures `.ovpn` auth) |
+| `VPN_PASSWORD` | No | — | VPN password (auto-configures `.ovpn` auth) |
+| `LAN_NETWORK` | Yes (if VPN on) | — | Local network in CIDR notation, e.g. `192.168.1.0/24` |
+| `NAME_SERVERS` | No | `1.1.1.1,9.9.9.9` | Comma-separated DNS servers |
+| `PUID` | No | `0` (root) | User ID for file ownership |
+| `PGID` | No | `0` (root) | Group ID for file ownership |
+| `UMASK` | No | `002` | File permission mask for new files |
+| `WEBUI_PORT_ENV` | No | `8080` | WebUI port (must also change exposed port to match) |
+| `INCOMING_PORT_ENV` | No | `8999` | Torrent listening port (must also change exposed port to match) |
 
 ## Volumes
-| Volume | Required | Function | Example |
-|----------|----------|----------|----------|
-| `config` | Yes | qBittorrent and OpenVPN config files | `/your/config/path/:/config`|
-| `downloads` | No | Default download path for torrents | `/your/downloads/path/:/downloads`|
+
+| Path | Required | Description |
+|---|---|---|
+| `/config` | Yes | qBittorrent config, OpenVPN config, and logs |
+| `/downloads` | No | Default download directory |
 
 ## Ports
-| Port | Proto | Required | Function | Example |
-|----------|----------|----------|----------|----------|
-| `8080` | TCP | Yes | qBittorrent WebUI | `8080:8080`|
-| `8999` | TCP | Yes | qBittorrent listening port | `8999:8999`|
-| `8999` | UDP | Yes | qBittorrent listening port | `8999:8999/udp`|
 
-# Access the WebUI
-Access http://IPADDRESS:PORT from a browser on the same network.
+| Port | Protocol | Description |
+|---|---|---|
+| `8080` | TCP | qBittorrent WebUI |
+| `8999` | TCP + UDP | qBittorrent incoming connections |
 
-## Default Credentials
-| Credential | Default Value |
-|----------|----------|
-|`WebUI Username`| admin |
-|`WebUI Password`| adminadmin |
+---
 
-## Origin header & Target origin mismatch
-WebUI\CSRFProtection must be set to false in qBittorrent.conf if using an unconfigured reverse proxy or forward request within a browser. This is the default setting unless changed. This file can be found in the dockers config directory in /qBittorrent/config
+## VPN Setup
 
-## WebUI: Invalid Host header, port mismatch
-qBittorrent throws a [WebUI: Invalid Host header, port mismatch](https://github.com/qbittorrent/qBittorrent/issues/7641#issuecomment-339370794) error if you use port forwarding with bridge networking due to security features to prevent DNS rebinding attacks. If you need to run qBittorrent on different ports, instead edit the WEBUI_PORT_ENV and/or INCOMING_PORT_ENV variables AND the exposed ports to change the native ports qBittorrent uses.
+The container **will not start** if `VPN_ENABLED=yes` and no `.ovpn` file is found in `/config/openvpn/`.
 
-# How to use OpenVPN
-The container will fail to boot if `VPN_ENABLED` is set to yes or empty and a .ovpn is not present in the /config/openvpn directory. Drop a .ovpn file from your VPN provider into /config/openvpn and start the container again. You may need to edit the ovpn configuration file to load your VPN credentials from a file by setting `auth-user-pass`.
+1. Place a single `.ovpn` file from your VPN provider in `/config/openvpn/`.
+2. If your provider requires username/password auth, either:
+   - Set `VPN_USERNAME` and `VPN_PASSWORD` environment variables, **or**
+   - Add `auth-user-pass credentials.conf` to your `.ovpn` file and create `/config/openvpn/credentials.conf`:
+     ```
+     your-username
+     your-password
+     ```
 
-**Note:** The script will use the first ovpn file it finds in the /config/openvpn directory. Adding multiple ovpn files will not start multiple VPN connections.
+> **Note:** Only the first `.ovpn` file found is used. Multiple files won't create multiple connections.
 
-## Example auth-user-pass option
-`auth-user-pass credentials.conf`
+---
 
-## Example credentials.conf
-```
-username
-password
-```
+## Troubleshooting
 
-## PUID/PGID
-User ID (PUID) and Group ID (PGID) can be found by issuing the following command for the user you want to run the container as:
+### "Origin header & Target origin mismatch"
 
-```
-id <username>
-```
+Set `WebUI\CSRFProtection=false` in `/config/qBittorrent/config/qBittorrent.conf` if using a reverse proxy.
 
-# Issues
-If you are having issues with this container please submit an issue on GitHub.
-Please provide logs, docker version and other information that can simplify reproducing the issue.
-Using the latest stable verison of Docker is always recommended. Support for older version is on a best-effort basis.
+### "WebUI: Invalid Host header, port mismatch"
 
-# Building the container yourself
-To build this container, clone the repository and cd into it.
+This happens when using port forwarding with bridge networking. Don't remap ports externally — instead change `WEBUI_PORT_ENV` and/or `INCOMING_PORT_ENV` and update the exposed ports to match.
 
-## Build it:
-```
-$ cd /repo/location/qbittorrentvpn
-$ docker build -t qbittorrentvpn .
-```
-## Run it:
-```
-$ docker run -d \
-              --cap-add=NET_ADMIN \
-              --cap-add=SYS_MODULE \
-              --device=/dev/net/tun \
-              -v /your/config/path/:/config \
-              -v /your/downloads/path/:/downloads \
-              -e "VPN_ENABLED=yes" \
-              -e "LAN_NETWORK=192.168.1.0/24" \
-              -e "NAME_SERVERS=1.1.1.1,9.9.9.9" \
-              -p 8080:8080 \
-              -p 8999:8999 \
-              -p 8999:8999/udp \
-              qbittorrentvpn
+### Container won't start on Raspberry Pi
+
+- Make sure `/dev/net/tun` exists: `ls -la /dev/net/tun`
+- If missing, run: `sudo modprobe tun`
+- Check logs: `docker compose logs -f qbittorrent`
+
+### VPN connection fails
+
+- Verify your `.ovpn` file works outside Docker first
+- Check container logs for OpenVPN errors: `docker compose logs qbittorrent | grep -i openvpn`
+- Make sure `LAN_NETWORK` is set correctly
+
+---
+
+## Building the Container Yourself
+
+Clone the repo and build:
+
+```bash
+git clone https://github.com/your-username/docker-qBittorrentvpn.git
+cd docker-qBittorrentvpn
+docker build -t qbittorrentvpn .
 ```
 
-This will start a container as described in the "Run container from Docker registry" section.
+Then update `docker-compose.yml` to use `image: qbittorrentvpn` instead of `image: aiwi/docker-qbittorrentvpn`, or run directly:
+
+```bash
+docker run -d \
+  --cap-add=NET_ADMIN \
+  --cap-add=SYS_MODULE \
+  --device=/dev/net/tun \
+  -v /your/config/path:/config \
+  -v /your/downloads/path:/downloads \
+  -e "VPN_ENABLED=yes" \
+  -e "LAN_NETWORK=192.168.1.0/24" \
+  -e "NAME_SERVERS=1.1.1.1,9.9.9.9" \
+  -p 8080:8080 \
+  -p 8999:8999 \
+  -p 8999:8999/udp \
+  qbittorrentvpn
+```
+
+---
+
+## Issues
+
+If you run into problems, [open an issue on GitHub](https://github.com/MarkusMcNugen/docker-qBittorrentvpn/issues) with:
+
+- Container logs (`docker compose logs qbittorrent`)
+- Docker version (`docker --version`)
+- Host OS and architecture (`uname -a`)
