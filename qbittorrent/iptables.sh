@@ -5,7 +5,7 @@ DEBUG=false
 
 # Wait until tunnel is up
 while : ; do
-	tunnelstat=$(netstat -ie | grep -E "tun|tap")
+	tunnelstat=$(ip link show | grep -E "tun|tap")
 	if [[ ! -z "${tunnelstat}" ]]; then
 		break
 	else
@@ -59,19 +59,26 @@ if [[ $iptable_mangle_exit_code == 0 ]]; then
 fi
 
 # identify docker bridge interface name (probably eth0)
- docker_interface=$(netstat -ie | grep -vE "lo|tun|tap" | sed -n '1!p' | grep -P -o -m 1 '^[\w]+')
+docker_interface=$(ip -o link show | grep -vE "lo|tun|tap" | head -n 1 | awk '{print $2}' | sed 's/:$//' | sed 's/@.*//')
 if [[ "${DEBUG}" == "true" ]]; then
 	echo "[debug] Docker interface defined as ${docker_interface}"
 fi
 
 # identify ip for docker bridge interface
-docker_ip=$(ifconfig "${docker_interface}" | grep -o "inet [0-9]*\.[0-9]*\.[0-9]*\.[0-9]*" | grep -o "[0-9]*\.[0-9]*\.[0-9]*\.[0-9]*")
+docker_ip=$(ip -4 addr show "${docker_interface}" | grep -oP '(?<=inet\s)\d+(\.\d+){3}')
 if [[ "${DEBUG}" == "true" ]]; then
  	echo "[debug] Docker IP defined as ${docker_ip}"
 fi
 
 # identify netmask for docker bridge interface
-docker_mask=$(ifconfig "${docker_interface}" | grep -o "netmask [0-9]*\.[0-9]*\.[0-9]*\.[0-9]*" | grep -o "[0-9]*\.[0-9]*\.[0-9]*\.[0-9]*")
+docker_mask=$(ip -4 addr show "${docker_interface}" | grep -oP '(?<=inet\s)\d+(\.\d+){3}/\d+' | cut -d'/' -f2)
+# Convert CIDR to netmask
+case ${docker_mask} in
+	24) docker_mask="255.255.255.0" ;;
+	16) docker_mask="255.255.0.0" ;;
+	8) docker_mask="255.0.0.0" ;;
+	*) docker_mask=$(printf '%d.%d.%d.%d\n' $(( (0xFFFFFFFF << (32 - ${docker_mask})) >> 24 & 0xFF )) $(( (0xFFFFFFFF << (32 - ${docker_mask})) >> 16 & 0xFF )) $(( (0xFFFFFFFF << (32 - ${docker_mask})) >> 8 & 0xFF )) $(( (0xFFFFFFFF << (32 - ${docker_mask})) & 0xFF ))) ;;
+esac
 if [[ "${DEBUG}" == "true" ]]; then
 	echo "[debug] Docker netmask defined as ${docker_mask}"
 fi
@@ -86,8 +93,13 @@ echo "[info] Docker network defined as ${docker_network_cidr}" | ts '%Y-%m-%d %H
 # set policy to drop ipv4 for input
 iptables -P INPUT DROP
 
-# set policy to drop ipv6 for input
+# Explicitly reject all IPv6 traffic to prevent leaks
 ip6tables -P INPUT DROP 1>&- 2>&-
+ip6tables -P OUTPUT DROP 1>&- 2>&-
+ip6tables -P FORWARD DROP 1>&- 2>&-
+ip6tables -A INPUT -j REJECT --reject-with icmp6-adm-prohibited 1>&- 2>&-
+ip6tables -A OUTPUT -j REJECT --reject-with icmp6-adm-prohibited 1>&- 2>&-
+ip6tables -A FORWARD -j REJECT --reject-with icmp6-adm-prohibited 1>&- 2>&-
 
 # accept input to tunnel adapter
 iptables -A INPUT -i "${VPN_DEVICE_TYPE}" -j ACCEPT
@@ -98,13 +110,13 @@ iptables -A INPUT -s "${docker_network_cidr}" -d "${docker_network_cidr}" -j ACC
 # accept input to vpn gateway
 iptables -A INPUT -i eth0 -p $VPN_PROTOCOL --sport $VPN_PORT -j ACCEPT
 
-# accept input to qbittorrent webui port
+# accept input to qbittorrent webui port - RESTRICTED TO LAN ONLY
 if [ -z "${WEBUI_PORT}" ]; then
-	iptables -A INPUT -i eth0 -p tcp --dport 8080 -j ACCEPT
-	iptables -A INPUT -i eth0 -p tcp --sport 8080 -j ACCEPT
+	iptables -A INPUT -i eth0 -s "${LAN_NETWORK}" -p tcp --dport 8080 -j ACCEPT
+	iptables -A INPUT -i eth0 -s "${LAN_NETWORK}" -p tcp --sport 8080 -j ACCEPT
 else
-	iptables -A INPUT -i eth0 -p tcp --dport ${WEBUI_PORT} -j ACCEPT
-	iptables -A INPUT -i eth0 -p tcp --sport ${WEBUI_PORT} -j ACCEPT
+	iptables -A INPUT -i eth0 -s "${LAN_NETWORK}" -p tcp --dport ${WEBUI_PORT} -j ACCEPT
+	iptables -A INPUT -i eth0 -s "${LAN_NETWORK}" -p tcp --sport ${WEBUI_PORT} -j ACCEPT
 fi
 
 # accept input to qbittorrent daemon port - used for lan access
@@ -127,9 +139,6 @@ iptables -A INPUT -i lo -j ACCEPT
 
 # set policy to drop ipv4 for output
 iptables -P OUTPUT DROP
-
-# set policy to drop ipv6 for output
-ip6tables -P OUTPUT DROP 1>&- 2>&-
 
 # accept output from tunnel adapter
 iptables -A OUTPUT -o "${VPN_DEVICE_TYPE}" -j ACCEPT
@@ -154,13 +163,13 @@ if [[ $iptable_mangle_exit_code == 0 ]]; then
 	
 fi
 
-# accept output from qBittorrent webui port - used for lan access
+# accept output from qBittorrent webui port - RESTRICTED TO LAN ONLY
 if [ -z "${WEBUI_PORT}" ]; then
-	iptables -A OUTPUT -o eth0 -p tcp --dport 8080 -j ACCEPT
-	iptables -A OUTPUT -o eth0 -p tcp --sport 8080 -j ACCEPT
+	iptables -A OUTPUT -o eth0 -d "${LAN_NETWORK}" -p tcp --dport 8080 -j ACCEPT
+	iptables -A OUTPUT -o eth0 -d "${LAN_NETWORK}" -p tcp --sport 8080 -j ACCEPT
 else
-	iptables -A OUTPUT -o eth0 -p tcp --dport ${WEBUI_PORT} -j ACCEPT
-	iptables -A OUTPUT -o eth0 -p tcp --sport ${WEBUI_PORT} -j ACCEPT
+	iptables -A OUTPUT -o eth0 -d "${LAN_NETWORK}" -p tcp --dport ${WEBUI_PORT} -j ACCEPT
+	iptables -A OUTPUT -o eth0 -d "${LAN_NETWORK}" -p tcp --sport ${WEBUI_PORT} -j ACCEPT
 fi
 
 # accept output to qBittorrent daemon port - used for lan access

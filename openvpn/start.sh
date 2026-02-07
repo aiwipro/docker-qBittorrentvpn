@@ -3,7 +3,7 @@
 set -e
 
 # check for presence of network interface docker0
-check_network=$(ifconfig | grep docker0 || true)
+check_network=$(ip link show docker0 2>/dev/null || true)
 
 # if network interface docker0 is present then we are running in host mode and thus must exit
 if [[ ! -z "${check_network}" ]]; then
@@ -46,19 +46,21 @@ if [[ $VPN_ENABLED == "yes" ]]; then
 	if [[ ! -z "${VPN_USERNAME}" ]] && [[ ! -z "${VPN_PASSWORD}" ]]; then
 		if [[ ! -e /config/openvpn/credentials.conf ]]; then
 			touch /config/openvpn/credentials.conf
+			chmod 600 /config/openvpn/credentials.conf
 		fi
 
-		echo "${VPN_USERNAME}" > /config/openvpn/credentials.conf
-		echo "${VPN_PASSWORD}" >> /config/openvpn/credentials.conf
+		printf '%s\n' "${VPN_USERNAME}" > /config/openvpn/credentials.conf
+		printf '%s\n' "${VPN_PASSWORD}" >> /config/openvpn/credentials.conf
+		chmod 600 /config/openvpn/credentials.conf
 
 		# Replace line with one that points to credentials.conf
-		auth_cred_exist=$(cat ${VPN_CONFIG} | grep -m 1 'auth-user-pass')
+		auth_cred_exist=$(cat "${VPN_CONFIG}" | grep -m 1 'auth-user-pass')
 		if [[ ! -z "${auth_cred_exist}" ]]; then
 			# Get line number of auth-user-pass
-			LINE_NUM=$(grep -Fn -m 1 'auth-user-pass' ${VPN_CONFIG} | cut -d: -f 1)
-			sed -i "${LINE_NUM}s/.*/auth-user-pass credentials.conf\n/" ${VPN_CONFIG}
+			LINE_NUM=$(grep -Fn -m 1 'auth-user-pass' "${VPN_CONFIG}" | cut -d: -f 1)
+			sed -i "${LINE_NUM}s/.*/auth-user-pass credentials.conf\n/" "${VPN_CONFIG}"
 		else
-			sed -i "1s/.*/auth-user-pass credentials.conf\n/" ${VPN_CONFIG}
+			sed -i "1s/.*/auth-user-pass credentials.conf\n/" "${VPN_CONFIG}"
 		fi
 	fi
 	
@@ -121,8 +123,8 @@ if [[ $VPN_ENABLED == "yes" ]]; then
 	if [[ ! -z "${NAME_SERVERS}" ]]; then
 		echo "[info] NAME_SERVERS defined as '${NAME_SERVERS}'" | ts '%Y-%m-%d %H:%M:%.S'
 	else
-		echo "[warn] NAME_SERVERS not defined (via -e NAME_SERVERS), defaulting to Google and FreeDNS name servers" | ts '%Y-%m-%d %H:%M:%.S'
-		export NAME_SERVERS="8.8.8.8,37.235.1.174,8.8.4.4,37.235.1.177"
+		echo "[warn] NAME_SERVERS not defined (via -e NAME_SERVERS), defaulting to Cloudflare and Quad9 name servers" | ts '%Y-%m-%d %H:%M:%.S'
+		export NAME_SERVERS="1.1.1.1,9.9.9.9,1.0.0.1,149.112.112.112"
 	fi
 	export VPN_OPTIONS=$(echo "${VPN_OPTIONS}" | sed -e 's~^[ \t]*~~;s~[ \t]*$~~')
 	if [[ ! -z "${VPN_OPTIONS}" ]]; then
@@ -149,6 +151,11 @@ for name_server_item in "${name_server_list[@]}"; do
 
 done
 
+# Lock resolv.conf to prevent OpenVPN or other processes from changing it
+# This prevents DNS leaks by ensuring our configured DNS servers are always used
+chattr +i /etc/resolv.conf
+echo "[info] resolv.conf locked to prevent DNS leaks" | ts '%Y-%m-%d %H:%M:%.S'
+
 if [[ -z "${PUID}" ]]; then
 	echo "[info] PUID not defined. Defaulting to root user" | ts '%Y-%m-%d %H:%M:%.S'
 	export PUID="root"
@@ -162,10 +169,39 @@ fi
 if [[ $VPN_ENABLED == "yes" ]]; then
 	echo "[info] Starting OpenVPN..." | ts '%Y-%m-%d %H:%M:%.S'
 	cd /config/openvpn
-	exec openvpn --config ${VPN_CONFIG} &
-	# give openvpn some time to connect
-	sleep 5
-	#exec /bin/bash /etc/openvpn/openvpn.init start &
+	exec openvpn --config "${VPN_CONFIG}" &
+	sleep 10  # Increased from 5 to 10 seconds
+
+	# Verify VPN is actually connected
+	max_attempts=30
+	attempt=0
+	echo "[info] Waiting for VPN tunnel to establish..." | ts '%Y-%m-%d %H:%M:%.S'
+
+	while [ $attempt -lt $max_attempts ]; do
+		# Check if tunnel interface exists and is routing
+		if ip addr show | grep -q "${VPN_DEVICE_TYPE}" && ip route | grep -q "${VPN_DEVICE_TYPE}"; then
+			echo "[info] VPN tunnel is up and routing" | ts '%Y-%m-%d %H:%M:%.S'
+
+			# Extra verification: check we can reach internet through VPN
+			if ping -c 1 -W 2 -I "${VPN_DEVICE_TYPE}" 1.1.1.1 >/dev/null 2>&1; then
+				echo "[info] VPN connection verified - internet accessible through tunnel" | ts '%Y-%m-%d %H:%M:%.S'
+				break
+			fi
+		fi
+		sleep 2
+		attempt=$((attempt + 1))
+	done
+
+	if [ $attempt -eq $max_attempts ]; then
+		echo "[crit] VPN failed to establish connection after 60 seconds" | ts '%Y-%m-%d %H:%M:%.S'
+		echo "[crit] Container will exit to prevent IP leak" | ts '%Y-%m-%d %H:%M:%.S'
+		exit 1
+	fi
+
+	# Start VPN health monitoring in background
+	echo "[info] Starting VPN health monitor..." | ts '%Y-%m-%d %H:%M:%.S'
+	/bin/bash /etc/openvpn/healthcheck.sh &
+
 	exec /bin/bash /etc/qbittorrent/iptables.sh
 else
 	exec /bin/bash /etc/qbittorrent/start.sh

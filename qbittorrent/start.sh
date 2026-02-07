@@ -81,7 +81,9 @@ if [ -e /proc/$qbpid ]; then
 	if [[ -e /config/qBittorrent/data/logs/qbittorrent.log ]]; then
 		chmod 775 /config/qBittorrent/data/logs/qbittorrent.log
 	fi
+	echo "[info] qBittorrent started successfully" | ts '%Y-%m-%d %H:%M:%.S'
 	sleep infinity
 else
-	echo "qBittorrent failed to start!"
+	echo "[crit] qBittorrent failed to start!" | ts '%Y-%m-%d %H:%M:%.S'
+	exit 1
 fi

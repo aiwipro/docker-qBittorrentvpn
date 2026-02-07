@@ -6,31 +6,38 @@ Docker container which runs the latest headless qBittorrent client with WebUI wh
 ![alt text][preview]
 
 ## Docker Features
-* Base: Ubuntu 20.04
+* Base: Ubuntu 24.04 LTS
 * Always builds latest qBittorrent client
-* Size: 300MB
+* Size: ~300MB
 * Selectively enable or disable OpenVPN support
 * IP tables kill switch to prevent IP leaking when VPN connection fails
-* Specify name servers to add to container
+* Specify name servers to add to container (defaults to Cloudflare and Quad9)
 * Configure UID, GID, and UMASK for config files and downloads by qBittorrent
 * WebUI\CSRFProtection set to false by default for Unraid users
+* Health check to monitor qBittorrent WebUI availability
+* Uses modern networking tools (iproute2) instead of deprecated net-tools
 
 # Run container from Docker registry
 The container is available from the Docker registry and this is the simplest way to get it.
 To run the container use this command:
 
 ```
-$ docker run --privileged  -d \
+$ docker run -d \
+              --cap-add=NET_ADMIN \
+              --cap-add=SYS_MODULE \
+              --device=/dev/net/tun \
               -v /your/config/path/:/config \
               -v /your/downloads/path/:/downloads \
               -e "VPN_ENABLED=yes" \
               -e "LAN_NETWORK=192.168.1.0/24" \
-              -e "NAME_SERVERS=8.8.8.8,8.8.4.4" \
+              -e "NAME_SERVERS=1.1.1.1,9.9.9.9" \
               -p 8080:8080 \
               -p 8999:8999 \
               -p 8999:8999/udp \
               aiwi/docker-qbittorrentvpn
 ```
+
+**Note:** This container uses specific Linux capabilities (`--cap-add`) instead of `--privileged` mode for better security. If you encounter issues, you can fall back to `--privileged` mode, but the capability-based approach is recommended.
 
 # Variables, Volumes, and Ports
 ## Environment Variables
@@ -111,12 +118,15 @@ $ docker build -t qbittorrentvpn .
 ```
 ## Run it:
 ```
-$ docker run --privileged  -d \
+$ docker run -d \
+              --cap-add=NET_ADMIN \
+              --cap-add=SYS_MODULE \
+              --device=/dev/net/tun \
               -v /your/config/path/:/config \
               -v /your/downloads/path/:/downloads \
               -e "VPN_ENABLED=yes" \
               -e "LAN_NETWORK=192.168.1.0/24" \
-              -e "NAME_SERVERS=8.8.8.8,8.8.4.4" \
+              -e "NAME_SERVERS=1.1.1.1,9.9.9.9" \
               -p 8080:8080 \
               -p 8999:8999 \
               -p 8999:8999/udp \
