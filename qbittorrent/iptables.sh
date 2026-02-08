@@ -19,8 +19,8 @@ echo "[info] WebUI port defined as ${WEBUI_PORT}" | ts '%Y-%m-%d %H:%M:%.S'
 export LAN_NETWORK=$(echo "${LAN_NETWORK}" | sed -e 's~^[ \t]*~~;s~[ \t]*$~~')
 echo "[info] LAN Network defined as ${LAN_NETWORK}" | ts '%Y-%m-%d %H:%M:%.S'
 
-# get default gateway of interfaces as looping through them
-DEFAULT_GATEWAY=$(ip -4 route list 0/0 | cut -d ' ' -f 3)
+# get default gateway for the docker bridge interface (not the VPN tunnel)
+DEFAULT_GATEWAY=$(ip -4 route list 0/0 dev eth0 | head -1 | cut -d ' ' -f 3)
 echo "[info] Default gateway defined as ${DEFAULT_GATEWAY}" | ts '%Y-%m-%d %H:%M:%.S'
 
 #echo "[info] Adding ${LAN_NETWORK} as route via docker eth0" | ts '%Y-%m-%d %H:%M:%.S'
@@ -59,32 +59,14 @@ if [[ $iptable_mangle_exit_code == 0 ]]; then
 fi
 
 # identify docker bridge interface name (probably eth0)
-docker_interface=$(ip -o link show | grep -vE "lo|tun|tap" | head -n 1 | awk '{print $2}' | sed 's/:$//' | sed 's/@.*//')
+# Filter for interfaces that are UP and have an ethernet link (excludes tunnel/virtual interfaces)
+docker_interface=$(ip -o link show up | grep 'link/ether' | head -n 1 | awk '{print $2}' | sed 's/:$//' | sed 's/@.*//')
 if [[ "${DEBUG}" == "true" ]]; then
 	echo "[debug] Docker interface defined as ${docker_interface}"
 fi
 
-# identify ip for docker bridge interface
-docker_ip=$(ip -4 addr show "${docker_interface}" | grep -oP '(?<=inet\s)\d+(\.\d+){3}')
-if [[ "${DEBUG}" == "true" ]]; then
- 	echo "[debug] Docker IP defined as ${docker_ip}"
-fi
-
-# identify netmask for docker bridge interface
-docker_mask=$(ip -4 addr show "${docker_interface}" | grep -oP '(?<=inet\s)\d+(\.\d+){3}/\d+' | cut -d'/' -f2)
-# Convert CIDR to netmask
-case ${docker_mask} in
-	24) docker_mask="255.255.255.0" ;;
-	16) docker_mask="255.255.0.0" ;;
-	8) docker_mask="255.0.0.0" ;;
-	*) docker_mask=$(printf '%d.%d.%d.%d\n' $(( (0xFFFFFFFF << (32 - ${docker_mask})) >> 24 & 0xFF )) $(( (0xFFFFFFFF << (32 - ${docker_mask})) >> 16 & 0xFF )) $(( (0xFFFFFFFF << (32 - ${docker_mask})) >> 8 & 0xFF )) $(( (0xFFFFFFFF << (32 - ${docker_mask})) & 0xFF ))) ;;
-esac
-if [[ "${DEBUG}" == "true" ]]; then
-	echo "[debug] Docker netmask defined as ${docker_mask}"
-fi
-
-# convert netmask into cidr format
-docker_network_cidr=$(ipcalc "${docker_ip}" "${docker_mask}" | grep -P -o -m 1 "(?<=Network:)\s+[^\s]+" | sed -e 's~^[ \t]*~~;s~[ \t]*$~~')
+# get docker network CIDR directly from the route table
+docker_network_cidr=$(ip -4 route show dev "${docker_interface}" | grep 'proto kernel' | awk '{print $1}' | head -1)
 echo "[info] Docker network defined as ${docker_network_cidr}" | ts '%Y-%m-%d %H:%M:%.S'
 
 # input iptable rules

@@ -41,9 +41,7 @@ services:
     image: aiwi/docker-qbittorrentvpn
     container_name: qbittorrent
     restart: unless-stopped
-    cap_add:
-      - NET_ADMIN
-      - SYS_MODULE
+    privileged: true
     devices:
       - /dev/net/tun
     volumes:
@@ -91,8 +89,7 @@ Default login: **admin** / **adminadmin**
 
 ```bash
 docker run -d \
-  --cap-add=NET_ADMIN \
-  --cap-add=SYS_MODULE \
+  --privileged \
   --device=/dev/net/tun \
   -v /your/config/path:/config \
   -v /your/downloads/path:/downloads \
@@ -112,8 +109,8 @@ docker run -d \
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `VPN_ENABLED` | No | `yes` | Enable VPN (`yes` or `no`) |
-| `VPN_USERNAME` | No | — | VPN username (auto-configures `.ovpn` auth) |
-| `VPN_PASSWORD` | No | — | VPN password (auto-configures `.ovpn` auth) |
+| `OPENVPN_USERNAME` | No | — | VPN username (auto-configures `.ovpn` auth) |
+| `OPENVPN_PASSWORD` | No | — | VPN password (auto-configures `.ovpn` auth) |
 | `LAN_NETWORK` | Yes (if VPN on) | — | Local network in CIDR notation, e.g. `192.168.1.0/24` |
 | `NAME_SERVERS` | No | `1.1.1.1,9.9.9.9` | Comma-separated DNS servers |
 | `PUID` | No | `0` (root) | User ID for file ownership |
@@ -144,7 +141,7 @@ The container **will not start** if `VPN_ENABLED=yes` and no `.ovpn` file is fou
 
 1. Place a single `.ovpn` file from your VPN provider in `/config/openvpn/`.
 2. If your provider requires username/password auth, either:
-   - Set `VPN_USERNAME` and `VPN_PASSWORD` environment variables, **or**
+   - Set `OPENVPN_USERNAME` and `OPENVPN_PASSWORD` environment variables, **or**
    - Add `auth-user-pass credentials.conf` to your `.ovpn` file and create `/config/openvpn/credentials.conf`:
      ```
      your-username
@@ -193,8 +190,7 @@ Then update `docker-compose.yml` to use `image: qbittorrentvpn` instead of `imag
 
 ```bash
 docker run -d \
-  --cap-add=NET_ADMIN \
-  --cap-add=SYS_MODULE \
+  --privileged \
   --device=/dev/net/tun \
   -v /your/config/path:/config \
   -v /your/downloads/path:/downloads \

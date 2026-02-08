@@ -43,14 +43,14 @@ if [[ $VPN_ENABLED == "yes" ]]; then
 	echo "[info] OpenVPN config file (ovpn extension) is located at ${VPN_CONFIG}" | ts '%Y-%m-%d %H:%M:%.S'
 	
 	# Read username and password env vars and put them in credentials.conf, then add ovpn config for credentials file
-	if [[ ! -z "${VPN_USERNAME}" ]] && [[ ! -z "${VPN_PASSWORD}" ]]; then
+	if [[ ! -z "${OPENVPN_USERNAME}" ]] && [[ ! -z "${OPENVPN_PASSWORD}" ]]; then
 		if [[ ! -e /config/openvpn/credentials.conf ]]; then
 			touch /config/openvpn/credentials.conf
 			chmod 600 /config/openvpn/credentials.conf
 		fi
 
-		printf '%s\n' "${VPN_USERNAME}" > /config/openvpn/credentials.conf
-		printf '%s\n' "${VPN_PASSWORD}" >> /config/openvpn/credentials.conf
+		printf '%s\n' "${OPENVPN_USERNAME}" > /config/openvpn/credentials.conf
+		printf '%s\n' "${OPENVPN_PASSWORD}" >> /config/openvpn/credentials.conf
 		chmod 600 /config/openvpn/credentials.conf
 
 		# Replace line with one that points to credentials.conf
@@ -140,6 +140,12 @@ fi
 # split comma seperated string into list from NAME_SERVERS env variable
 IFS=',' read -ra name_server_list <<< "${NAME_SERVERS}"
 
+# Remove immutable flag if left over from a previous run
+chattr -i /etc/resolv.conf 2>/dev/null || true
+
+# Clear resolv.conf before writing fresh nameservers
+> /etc/resolv.conf
+
 # process name servers in the list
 for name_server_item in "${name_server_list[@]}"; do
 
@@ -151,10 +157,9 @@ for name_server_item in "${name_server_list[@]}"; do
 
 done
 
-# Lock resolv.conf to prevent OpenVPN or other processes from changing it
-# This prevents DNS leaks by ensuring our configured DNS servers are always used
-chattr +i /etc/resolv.conf
-echo "[info] resolv.conf locked to prevent DNS leaks" | ts '%Y-%m-%d %H:%M:%.S'
+# Protect resolv.conf from accidental modification to prevent DNS leaks
+chmod 444 /etc/resolv.conf
+echo "[info] resolv.conf set to read-only to prevent DNS leaks" | ts '%Y-%m-%d %H:%M:%.S'
 
 if [[ -z "${PUID}" ]]; then
 	echo "[info] PUID not defined. Defaulting to root user" | ts '%Y-%m-%d %H:%M:%.S'
@@ -183,10 +188,13 @@ if [[ $VPN_ENABLED == "yes" ]]; then
 			echo "[info] VPN tunnel is up and routing" | ts '%Y-%m-%d %H:%M:%.S'
 
 			# Extra verification: check we can reach internet through VPN
+			# Some VPN providers block ICMP, so treat ping failure as a warning only
 			if ping -c 1 -W 2 -I "${VPN_DEVICE_TYPE}" 1.1.1.1 >/dev/null 2>&1; then
 				echo "[info] VPN connection verified - internet accessible through tunnel" | ts '%Y-%m-%d %H:%M:%.S'
-				break
+			else
+				echo "[warn] Ping through VPN failed (provider may block ICMP) - proceeding anyway" | ts '%Y-%m-%d %H:%M:%.S'
 			fi
+			break
 		fi
 		sleep 2
 		attempt=$((attempt + 1))
