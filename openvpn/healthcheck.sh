@@ -16,8 +16,8 @@ while true; do
 		exit 1
 	fi
 
-	# Optional: Verify internet connectivity through VPN
-	if ! ping -c 1 -W 5 -I "${VPN_DEVICE_TYPE}" 1.1.1.1 >/dev/null 2>&1; then
+	# Verify internet connectivity through VPN (use DNS lookup — some providers block ICMP)
+	if ! nslookup google.com >/dev/null 2>&1; then
 		echo "[warn] VPN tunnel exists but internet not reachable" | ts '%Y-%m-%d %H:%M:%.S'
 	fi
 done
